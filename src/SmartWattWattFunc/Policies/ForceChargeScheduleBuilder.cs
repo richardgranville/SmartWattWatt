@@ -205,22 +205,22 @@ public sealed class ForceChargeScheduleBuilder(ScheduleOptions options) : IForce
         new(ScheduleMode.Default, CreateDefaultSlot1(), CreateDefaultSlot2());
 
     private ForceChargeSchedule CreateOvernightAdjusted(EvDispatch outside) =>
-        new(ScheduleMode.OvernightAdjusted, TimeSlot.FromDispatch(outside.Start, outside.End), CreateDefaultSlot2());
+        new(ScheduleMode.OvernightAdjusted, TimeSlot.FromDispatch(outside.Start, outside.End, _timeZone), CreateDefaultSlot2());
 
     private ForceChargeSchedule CreatePreScheduled(IReadOnlyList<EvDispatch> pending)
     {
-        var slot1 = TimeSlot.FromDispatch(pending[0].Start, pending[0].End);
+        var slot1 = TimeSlot.FromDispatch(pending[0].Start, pending[0].End, _timeZone);
         var slot2 = pending.Count >= 2
-            ? TimeSlot.FromDispatch(pending[1].Start, pending[1].End)
+            ? TimeSlot.FromDispatch(pending[1].Start, pending[1].End, _timeZone)
             : CreateDefaultSlot2();
         return new ForceChargeSchedule(ScheduleMode.PreScheduled, slot1, slot2);
     }
 
     private ForceChargeSchedule CreateProgressive(EvDispatch slot1Dispatch, TimeSlot slot2) =>
-        new(ScheduleMode.ProgressiveStaging, TimeSlot.FromDispatch(slot1Dispatch.Start, slot1Dispatch.End), slot2);
+        new(ScheduleMode.ProgressiveStaging, TimeSlot.FromDispatch(slot1Dispatch.Start, slot1Dispatch.End, _timeZone), slot2);
 
     private ForceChargeSchedule CreateProgressive(EvDispatch slot1Dispatch, EvDispatch slot2Dispatch) =>
-        CreateProgressive(slot1Dispatch, TimeSlot.FromDispatch(slot2Dispatch.Start, slot2Dispatch.End));
+        CreateProgressive(slot1Dispatch, TimeSlot.FromDispatch(slot2Dispatch.Start, slot2Dispatch.End, _timeZone));
 
     private TimeSlot CreateDefaultSlot1() =>
         new(true, options.DefaultSlot1Start, options.DefaultSlot1End);
@@ -240,8 +240,8 @@ public sealed class ForceChargeScheduleBuilder(ScheduleOptions options) : IForce
     private bool InDefaultForceCharge(DateTimeOffset nowLocal) =>
         nowLocal.TimeOfDay >= _defaultFcEveningStart || nowLocal.TimeOfDay < _daytimeGapStart;
 
-    private static bool IsPreMidnightEvening(DateTimeOffset nowLocal, IReadOnlyList<EvDispatch> pending) =>
-        pending[0].Start.Date > nowLocal.Date;
+    private bool IsPreMidnightEvening(DateTimeOffset nowLocal, IReadOnlyList<EvDispatch> pending) =>
+        ToLocal(pending[0].Start).Date > nowLocal.Date;
 
     private static bool InActiveDispatch(DateTimeOffset nowLocal, IReadOnlyList<EvDispatch> pending) =>
         pending.Any(d => d.IsActiveAt(nowLocal));
