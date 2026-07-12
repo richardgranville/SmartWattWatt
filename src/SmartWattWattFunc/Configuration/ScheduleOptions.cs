@@ -15,4 +15,6 @@ public sealed class ScheduleOptions
     public TimeOfDay DefaultSlot2End { get; init; } = TimeOfDay.Parse("05:30");
 
     public bool SyncEnabled { get; init; } = true;
+
+    public bool TestMode { get; init; }
 }

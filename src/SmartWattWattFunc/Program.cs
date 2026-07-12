@@ -28,10 +28,13 @@ builder.Services.AddSingleton(sp =>
         DefaultSlot1End = TimeOfDay.Parse(configuration["FoxEss:DefaultSlot1End"] ?? "23:59"),
         DefaultSlot2Start = TimeOfDay.Parse(configuration["FoxEss:DefaultSlot2Start"] ?? "00:00"),
         DefaultSlot2End = TimeOfDay.Parse(configuration["FoxEss:DefaultSlot2End"] ?? "05:30"),
-        SyncEnabled = bool.Parse(configuration["Sync:Enabled"] ?? "true")
+        SyncEnabled = bool.Parse(configuration["Sync:Enabled"] ?? "true"),
+        TestMode = bool.Parse(configuration["Sync:TestMode"] ?? "false")
     };
 });
 
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ITestModeLogger, TestModeLogger>();
 builder.Services.AddSingleton<IForceChargeScheduleBuilder, ForceChargeScheduleBuilder>();
 builder.Services.AddSingleton<IEvChargeSyncService, EvChargeSyncService>();
 

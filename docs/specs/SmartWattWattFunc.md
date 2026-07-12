@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Document version** | 1.1 (draft for review) |
+| **Document version** | 1.2 (draft for review) |
 | **Status** | Ready for implementation |
 | **Last updated** | 2026-07-12 |
 | **Component** | `SmartWattWattFunc` |
@@ -48,6 +48,7 @@ This document defines the specification for review **before** any implementation
 | G7 | **Repurpose slot 1** for outside-default dispatches after midnight, keeping slot 2 at 00:00–05:30 where possible |
 | G8 | Restore default windows when all `plannedDispatches` have completed |
 | G9 | Emit structured logs and a per-run summary suitable for monitoring and debugging |
+| G10 | Support a **TestMode** configuration that runs the full decision pipeline but suppresses Fox ESS writes, emitting verbose slot-change and API-call logs for safe local validation |
 
 ### 2.2 Non-goals (MVP)
 
@@ -95,6 +96,7 @@ This document defines the specification for review **before** any implementation
 | Q8 | **Multiple outside-default dispatches:** Progressively stage outside-default windows into slots during the overnight cycle. See Scenario 5 (§12). |
 | Q9 | **Fail-safe when Fox ESS write fails:** Log error; retry on next scheduled run (no in-run retry loop) |
 | Q10 | **Notification on failure:** Application Insights alert only (no email/Teams for MVP) |
+| Q11 | **TestMode vs Sync.Enabled:** `Sync__TestMode` suppresses Fox ESS **set** calls and emits verbose slot/API logs. `Sync__Enabled=false` is a simple dry-run (minimal log only). When TestMode is on, Fox ESS writes are suppressed regardless of `Sync__Enabled`. Octopus fetch and Fox ESS **get** still run so comparisons use live data |
 
 ### 4.2 Still open (please verify)
 
@@ -143,7 +145,7 @@ SmartWattWatt/
 │       ├── Functions/
 │       │   └── EvChargeSyncTimer.cs
 │       ├── Configuration/
-│       │   └── AppSettings.cs
+│       │   └── ScheduleOptions.cs
 │       ├── Integrations/
 │       │   ├── Octopus/
 │       │   │   ├── IOctopusGraphQlClient.cs
@@ -155,7 +157,9 @@ SmartWattWatt/
 │       │       └── Models/
 │       ├── Services/
 │       │   ├── IEvChargeSyncService.cs
-│       │   └── EvChargeSyncService.cs
+│       │   ├── EvChargeSyncService.cs
+│       │   ├── ITestModeLogger.cs
+│       │   └── TestModeLogger.cs
 │       └── Policies/
 │           ├── IForceChargeScheduleBuilder.cs
 │           └── ForceChargeScheduleBuilder.cs
@@ -169,7 +173,8 @@ SmartWattWatt/
 │       │       ├── Scenario3_NoDispatchesTests.cs
 │       │       ├── Scenario3_OctopusUnavailableTests.cs
 │       │       ├── Scenario4_DaytimePreScheduleTests.cs
-│       │       └── Scenario5_ProgressiveStagingTests.cs
+│       │       ├── Scenario5_ProgressiveStagingTests.cs
+│       │       └── Scenario6_TestModeTests.cs
 ├── .gitignore
 ├── SmartWattWatt.sln
 └── README.md
@@ -224,8 +229,137 @@ SmartWattWatt/
 | `FoxEss__DefaultSlot2Start` | Yes | `00:00` | Default Force Charge window 2 start (local) |
 | `FoxEss__DefaultSlot2End` | Yes | `05:30` | Default Force Charge window 2 end (local) |
 | `Sync__Enabled` | Yes | `true` | Master switch for writes to Fox ESS |
+| `Sync__TestMode` | No | `false` | When `true`, suppress Fox ESS **set** calls and log verbose slot changes and API-call details instead (see §8.3) |
 | `Sync__LookAheadHours` | Yes | `24` | Hours ahead to consider upcoming dispatches |
 | `Sync__ChargeWindowBufferMinutes` | No | `0` | Optional buffer applied to dispatch boundaries |
+
+### 8.3 TestMode behaviour
+
+`Sync__TestMode` is intended for **local development and pre-deployment validation**. It exercises the full sync pipeline — Octopus fetch, schedule policy, Fox ESS read, and idempotency comparison — but **never calls** the Fox ESS `forceChargeTime/set` endpoint.
+
+**Important:** TestMode **must not** skip the Fox ESS `forceChargeTime/get` call. The live current schedule is always read so slot diffs, idempotency checks, and verbose logs reflect the real device state. Only the **set** endpoint is suppressed.
+
+| Aspect | Production (`TestMode=false`) | TestMode (`TestMode=true`) |
+|---|---|---|
+| Octopus GraphQL fetch | Yes | Yes |
+| Fox ESS `forceChargeTime/get` | Yes | Yes |
+| Fox ESS `forceChargeTime/set` | When `Sync__Enabled=true` and schedule differs | **Never** |
+| Logging on would-write | Single `Applied Fox ESS schedule` line | Verbose slot diff + redacted API-call log (§8.3.1) |
+| `RunSummary.writeApplied` | `true` when set succeeds | Always `false` |
+| `RunSummary.testMode` | `false` | `true` |
+
+**Interaction with `Sync__Enabled`:**
+
+| `Sync__Enabled` | `Sync__TestMode` | Fox ESS set | Logging |
+|---|---|---|---|
+| `true` | `false` | When schedule differs | Standard production logs |
+| `false` | `false` | Never | `DryRun` — desired mode only |
+| `true` | `true` | Never | Verbose TestMode logs |
+| `false` | `true` | Never | Verbose TestMode logs |
+
+When TestMode is enabled, verbose logging takes precedence over the simple `DryRun` message.
+
+#### 8.3.1 Verbose TestMode log payload
+
+When a Fox ESS write **would** be applied, the service logs a structured `TestModeSchedulePlan` entry before returning. When no write is required, it logs a shorter `TestModeNoChange` entry.
+
+**`TestModeSchedulePlan` (would-write):**
+
+```json
+{
+  "runId": "guid",
+  "testMode": true,
+  "timestampUtc": "2026-07-13T00:15:00Z",
+  "scheduleMode": "OvernightAdjusted",
+  "reason": "After 00:00 — repurposed slot 1 for outside-default dispatch 07:30–08:30",
+  "slotChanges": [
+    {
+      "slot": 1,
+      "action": "Update",
+      "current": { "enabled": true, "start": "23:30", "end": "23:59" },
+      "desired": { "enabled": true, "start": "07:30", "end": "08:30" },
+      "effectiveWhen": "Immediate on next Fox ESS set call"
+    },
+    {
+      "slot": 2,
+      "action": "Unchanged",
+      "current": { "enabled": true, "start": "00:00", "end": "05:30" },
+      "desired": { "enabled": true, "start": "00:00", "end": "05:30" }
+    }
+  ],
+  "plannedDispatches": [
+    { "start": "2026-07-13T02:00:00+01:00", "end": "2026-07-13T05:30:00+01:00", "classification": "InsideDefault" },
+    { "start": "2026-07-13T07:30:00+01:00", "end": "2026-07-13T08:30:00+01:00", "classification": "OutsideDefault" }
+  ],
+  "apiCalls": [
+    {
+      "operation": "GetForceChargeSchedule",
+      "method": "GET",
+      "path": "/op/v0/device/battery/forceChargeTime/get",
+      "query": { "sn": "H3-XXXXXXXX" },
+      "executed": true
+    },
+    {
+      "operation": "SetForceChargeSchedule",
+      "method": "POST",
+      "path": "/op/v0/device/battery/forceChargeTime/set",
+      "executed": false,
+      "requestBody": {
+        "sn": "H3-XXXXXXXX",
+        "enable1": true,
+        "enable2": true,
+        "startTime1": { "hour": 7, "minute": 30 },
+        "endTime1": { "hour": 8, "minute": 30 },
+        "startTime2": { "hour": 0, "minute": 0 },
+        "endTime2": { "hour": 5, "minute": 30 }
+      },
+      "headers": {
+        "token": "[REDACTED]",
+        "timestamp": "[REDACTED]",
+        "signature": "[REDACTED]",
+        "lang": "en",
+        "User-Agent": "SmartWattWatt/1.0"
+      }
+    }
+  ]
+}
+```
+
+**`TestModeNoChange` (no write required):**
+
+```json
+{
+  "runId": "guid",
+  "testMode": true,
+  "timestampUtc": "2026-07-13T00:15:00Z",
+  "scheduleMode": "OvernightAdjusted",
+  "reason": "Desired schedule already matches Fox ESS",
+  "slotChanges": [],
+  "apiCalls": [
+    {
+      "operation": "GetForceChargeSchedule",
+      "method": "GET",
+      "path": "/op/v0/device/battery/forceChargeTime/get",
+      "query": { "sn": "H3-XXXXXXXX" },
+      "executed": true
+    }
+  ]
+}
+```
+
+**Redaction rules (mandatory):**
+
+| Field | Rule |
+|---|---|
+| `token` header | Always log `[REDACTED]` |
+| `signature` header | Always log `[REDACTED]` |
+| `timestamp` header | Log `[REDACTED]` in TestMode API-call logs (value is non-secret but omitted for consistency) |
+| Octopus `Authorization` header | Never included in TestMode logs |
+| Key Vault secret values | Never included |
+
+Device serial number (`sn`) **may** be logged — it is configuration, not a secret.
+
+**Implementation note:** introduce `ITestModeLogger` (or equivalent) in the service layer so TestMode output is testable without parsing raw `ILogger` string templates. The interface serialises the payloads above and writes them at `LogInformation` level with a fixed event name (`TestModeSchedulePlan` / `TestModeNoChange`).
 
 ### 8.2 Secrets (Azure Key Vault)
 
@@ -414,10 +548,12 @@ sequenceDiagram
     B-->>S: desiredSchedule
     S->>F: GetForceChargeSchedule()
     F-->>S: currentSchedule
-    alt desiredSchedule != currentSchedule AND Sync.Enabled
+    alt desiredSchedule != currentSchedule AND Sync.Enabled AND NOT TestMode
         S->>F: SetForceChargeSchedule(desiredSchedule)
-    else no change
-        S->>S: Log NoChange
+    else TestMode AND would write
+        S->>S: Log TestModeSchedulePlan (no Fox set)
+    else no change OR TestMode no-change
+        S->>S: Log NoChange / TestModeNoChange
     end
     S-->>T: RunSummary
 ```
@@ -432,7 +568,9 @@ sequenceDiagram
 | 4 | Build `desiredSchedule` via `ForceChargeScheduleBuilder` | — |
 | 5 | Read current Fox ESS Force Charge schedule | Abort; no Fox writes |
 | 6 | Compare `desiredSchedule` vs `currentSchedule` (normalised) | — |
-| 7 | If different and `Sync__Enabled`, write to Fox ESS | Log result |
+| 7 | If different and `Sync__Enabled` and **not** `Sync__TestMode`, write to Fox ESS | Log result |
+| 7a | If different and `Sync__TestMode`, log `TestModeSchedulePlan` (slot diff + redacted API calls); **do not** call Fox ESS set | — |
+| 7b | If same and `Sync__TestMode`, log `TestModeNoChange` | — |
 | 8 | Write `RunSummary` to logs | — |
 
 ### 10.2 Schedule modes
@@ -475,10 +613,13 @@ sequenceDiagram
     "reason": "After 00:00 — repurposed slot 1 for outside-default dispatch 07:30–08:30"
   },
   "writeApplied": true,
+  "testMode": false,
   "durationMs": 3100,
   "success": true
 }
 ```
+
+When `Sync__TestMode=true`, `writeApplied` is always `false` and `testMode` is `true`. The verbose slot/API detail is emitted separately as `TestModeSchedulePlan` or `TestModeNoChange` (§8.3.1).
 
 ---
 
@@ -593,8 +734,9 @@ When multiple outside-default dispatches exist alongside inside-default overnigh
 
 | Condition | Action |
 |---|---|
-| `desiredSchedule` normalised equals `currentSchedule` | Skip write; log `NoChange` |
-| `Sync__Enabled = false` | Log `DryRun` only; no Fox ESS writes |
+| `desiredSchedule` normalised equals `currentSchedule` | Skip write; log `NoChange` (or `TestModeNoChange` when TestMode is on) |
+| `Sync__Enabled = false` and `Sync__TestMode = false` | Log `DryRun` only; no Fox ESS writes |
+| `Sync__TestMode = true` | Always call Fox ESS get; never call Fox ESS set; log verbose TestMode payload per §8.3.1 |
 
 ### 11.6 Schedule comparison (normalised)
 
@@ -1167,6 +1309,133 @@ When Octopus returns **no** `plannedDispatches` (empty array) or the API is **un
 
 > **Further scenarios** to be added by the user. Each scenario gets its own test class under `Policies/Scenarios/`.
 
+### Scenario 6 — TestMode (verbose logging, no Fox ESS writes)
+
+**Test class:** `Scenario6_TestModeTests.cs`
+
+**Scope:** Service-level functional tests for `EvChargeSyncService` when `Sync__TestMode=true`. Tests use Moq for `IOctopusGraphQlClient` and `IFoxEssClient`, and a test double or mock for `ITestModeLogger` to capture verbose output without parsing `ILogger` strings.
+
+**Shared setup:**
+
+| Field | Value |
+|---|---|
+| `Sync__TestMode` | `true` |
+| `Sync__Enabled` | `true` (writes would normally occur) |
+| Device serial | `H3-TEST-SERIAL` |
+
+**Reference dispatches (Scenario 1 subset):**
+
+| Dispatch | Start (local) | End (local) | Classification |
+|---|---|---|---|
+| D1 | 03:00 | 05:30 | Inside-default |
+| D2 | 07:30 | 08:30 | Outside-default |
+
+#### S6-T1: TestMode — would-write, no Fox ESS set call
+
+| Field | Value |
+|---|---|
+| **Given** | `now = 2026-07-13 00:15` (London) |
+| **Given** | `plannedDispatches = [D1, D2]` |
+| **Given** | Current Fox ESS schedule = **Default** |
+| **Given** | `Sync__TestMode = true`, `Sync__Enabled = true` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `SetForceChargeScheduleAsync` is **never** called |
+| **Then** | `summary.WriteApplied = false` |
+| **Then** | `summary.TestMode = true` |
+| **Then** | `summary.Success = true` |
+| **Then** | `TestModeSchedulePlan` is logged |
+| **Then** | Plan `scheduleMode = OvernightAdjusted` |
+| **Then** | Plan `slotChanges` contains slot 1 **Update** (23:30–23:59 → 07:30–08:30) and slot 2 **Unchanged** |
+| **Then** | Plan `apiCalls` contains executed GET and non-executed POST with matching `requestBody` |
+| **Then** | Plan `apiCalls[].headers.token`, `signature` = `[REDACTED]` |
+| **Then** | No log output contains the configured Fox ESS API token |
+
+#### S6-T2: TestMode — already matches, no write, no-change log
+
+| Field | Value |
+|---|---|
+| **Given** | `now = 2026-07-13 00:15` (London) |
+| **Given** | `plannedDispatches = [D1, D2]` |
+| **Given** | Current = **OvernightAdjusted** (slot1 07:30–08:30, slot2 00:00–05:30) |
+| **Given** | `Sync__TestMode = true` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `SetForceChargeScheduleAsync` is **never** called |
+| **Then** | `summary.WriteApplied = false` |
+| **Then** | `TestModeNoChange` is logged |
+| **Then** | Plan `slotChanges` is empty |
+| **Then** | Plan `apiCalls` contains only the executed GET |
+
+#### S6-T3: TestMode — default restoration (Scenario 3 overlap)
+
+| Field | Value |
+|---|---|
+| **Given** | `now = 2026-07-13 10:00` (London) |
+| **Given** | Octopus returns `[]` (or fails) |
+| **Given** | Current = **OvernightAdjusted** |
+| **Given** | `Sync__TestMode = true` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `SetForceChargeScheduleAsync` is **never** called |
+| **Then** | `TestModeSchedulePlan` is logged |
+| **Then** | Plan `scheduleMode = Default` |
+| **Then** | Plan `slotChanges` contains slot 1 **Update** back to 23:30–23:59 |
+| **Then** | POST `requestBody` reflects default slot times |
+
+#### S6-T4: TestMode with Sync.Enabled=false — still verbose, still no set
+
+| Field | Value |
+|---|---|
+| **Given** | Same as S6-T1 (would-write scenario) |
+| **Given** | `Sync__TestMode = true`, `Sync__Enabled = false` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `SetForceChargeScheduleAsync` is **never** called |
+| **Then** | `TestModeSchedulePlan` is logged (not simple `DryRun` only) |
+| **Then** | `summary.WriteApplied = false` |
+
+#### S6-T5: TestMode — pre-scheduled daytime write suppressed
+
+| Field | Value |
+|---|---|
+| **Given** | `now = 2026-07-13 10:00` (London) — Scenario 4 daytime gap |
+| **Given** | `plannedDispatches = [D1 14:00–15:00, D2 18:00–19:00]` (outside-default daytime) |
+| **Given** | Current = **Default** |
+| **Given** | `Sync__TestMode = true` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `SetForceChargeScheduleAsync` is **never** called |
+| **Then** | `TestModeSchedulePlan` is logged |
+| **Then** | Plan `scheduleMode = PreScheduled` |
+| **Then** | Plan `slotChanges` shows both slots **Update** |
+| **Then** | POST `requestBody` slot times match 14:00–15:00 and 18:00–19:00 |
+
+#### S6-T6: TestMode — Fox ESS get is always called
+
+| Field | Value |
+|---|---|
+| **Given** | Any Scenario 6 setup (S6-T1 or S6-T2) |
+| **Given** | `Sync__TestMode = true` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `GetForceChargeScheduleAsync` is called **exactly once** |
+| **Then** | `SetForceChargeScheduleAsync` is **never** called |
+
+#### S6-T7: Production mode — TestMode off, write still occurs
+
+| Field | Value |
+|---|---|
+| **Given** | Same as S6-T1 |
+| **Given** | `Sync__TestMode = false`, `Sync__Enabled = true` |
+| **When** | `EvChargeSyncService.RunAsync()` is called |
+| **Then** | `GetForceChargeScheduleAsync` is called **once** |
+| **Then** | `SetForceChargeScheduleAsync` is called **once** |
+| **Then** | `summary.WriteApplied = true` |
+| **Then** | `summary.TestMode = false` |
+| **Then** | `TestModeSchedulePlan` is **not** logged |
+
+### Scenario 6 summary
+
+```
+TestMode ON  → Full pipeline, Fox GET only, verbose plan logged, writeApplied=false
+TestMode OFF → Normal production behaviour (set when enabled and changed)
+```
+
 ---
 
 ## 13. Security
@@ -1175,7 +1444,7 @@ When Octopus returns **no** `plannedDispatches` (empty array) or the API is **un
 |---|---|
 | **Secrets storage** | Azure Key Vault only in deployed environments |
 | **Managed Identity** | Function App uses MI to read Key Vault |
-| **Logging** | Never log API keys, tokens, or signatures |
+| **Logging** | Never log API keys, tokens, or signatures. TestMode API-call logs must redact auth headers per §8.3.1 |
 | **Transport** | TLS 1.2+ for all outbound calls |
 
 ---
@@ -1213,10 +1482,11 @@ When Octopus returns **no** `plannedDispatches` (empty array) or the API is **un
 | Layer | Scope |
 |---|---|
 | **Functional tests (required)** | Scenario-based schedule builder tests per §12 — must pass before release |
+| **TestMode functional tests (required)** | Scenario 6 service tests per §12 — must pass before release |
 | **Unit tests** | Dispatch classification (inside/outside default), timezone conversion, idempotency comparison |
 | **Integration tests** | GraphQL and Fox ESS clients against recorded JSON fixtures |
-| **Manual smoke test** | `Sync__Enabled=false`; verify schedule against live Octopus data |
-| **Live write test** | Confirm Scenario 1 behaviour against real Fox ESS during known dispatch windows |
+| **Manual smoke test** | `Sync__TestMode=true` locally; verify verbose logs against live Octopus + Fox ESS read data without writes |
+| **Live write test** | `Sync__TestMode=false`, `Sync__Enabled=true`; confirm Scenario 1 behaviour against real Fox ESS during known dispatch windows |
 
 ---
 
@@ -1238,9 +1508,13 @@ When Octopus returns **no** `plannedDispatches` (empty array) or the API is **un
 | AC12 | Updated Octopus dispatch windows trigger schedule re-write on next run |
 | AC13 | Progressive staging assigns outside-default dispatches across slots per Scenario 5 timeline |
 | AC14 | All Scenario 1–5 functional tests (§12) pass |
-| AC15 | With `Sync__Enabled=false`, no Fox ESS write endpoints are called |
+| AC15 | With `Sync__Enabled=false` and `Sync__TestMode=false`, no Fox ESS write endpoints are called |
 | AC16 | No secrets in logs or repository |
 | AC17 | `RunSummary` JSON logged every invocation |
+| AC18 | With `Sync__TestMode=true`, Fox ESS `forceChargeTime/get` is always called and `forceChargeTime/set` is never called regardless of `Sync__Enabled` |
+| AC19 | TestMode logs verbose slot changes and redacted API-call details per §8.3.1 |
+| AC20 | TestMode log output never contains API tokens, signatures, or Octopus auth tokens |
+| AC21 | All Scenario 6 TestMode functional tests (§12) pass |
 
 ---
 
@@ -1278,3 +1552,4 @@ When Octopus returns **no** `plannedDispatches` (empty array) or the API is **un
 | 0.9 | 2026-07-12 | Scenario 5: progressive overnight staging for multiple outside-default dispatches |
 | 1.0 | 2026-07-12 | Q9 confirmed: Fox ESS write failure — log error, retry next run |
 | 1.1 | 2026-07-12 | Q10 confirmed: Application Insights alerts only; spec complete |
+| 1.2 | 2026-07-12 | Added `Sync__TestMode` configuration, verbose slot/API logging behaviour (§8.3), Scenario 6 functional tests, acceptance criteria AC18–AC21. TestMode always performs Fox ESS get; only set is suppressed |

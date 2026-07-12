@@ -4,7 +4,6 @@ using SmartWattWattFunc.Configuration;
 using SmartWattWattFunc.Integrations.FoxEss;
 using SmartWattWattFunc.Integrations.Octopus;
 using SmartWattWattFunc.Models;
-using SmartWattWattFunc.Policies;
 using SmartWattWattFunc.Services;
 
 namespace SmartWattWattFunc.Tests.Policies.Scenarios;
@@ -26,12 +25,11 @@ public sealed class Scenario3_OctopusUnavailableTests
             .Verifiable();
 
         var options = new ScheduleOptions { SyncEnabled = true };
-        var service = new EvChargeSyncService(
+        var service = ServiceTestSupport.CreateService(
             octopus.Object,
             fox.Object,
-            ScheduleTestSupport.CreateBuilder(),
             options,
-            NullLogger<EvChargeSyncService>.Instance);
+            ServiceTestSupport.CreateCaptureLogger());
 
         var summary = await service.RunAsync();
 
@@ -54,12 +52,11 @@ public sealed class Scenario3_OctopusUnavailableTests
             .ReturnsAsync(ScheduleTestSupport.DefaultSchedule());
 
         var options = new ScheduleOptions { SyncEnabled = true };
-        var service = new EvChargeSyncService(
+        var service = ServiceTestSupport.CreateService(
             octopus.Object,
             fox.Object,
-            ScheduleTestSupport.CreateBuilder(),
             options,
-            NullLogger<EvChargeSyncService>.Instance);
+            ServiceTestSupport.CreateCaptureLogger());
 
         var summary = await service.RunAsync();
 

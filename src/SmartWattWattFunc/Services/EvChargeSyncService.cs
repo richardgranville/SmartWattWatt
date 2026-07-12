@@ -17,13 +17,15 @@ public sealed class EvChargeSyncService(
     IOctopusGraphQlClient octopusClient,
     IFoxEssClient foxEssClient,
     IForceChargeScheduleBuilder scheduleBuilder,
+    ITestModeLogger testModeLogger,
     ScheduleOptions options,
+    TimeProvider timeProvider,
     ILogger<EvChargeSyncService> logger) : IEvChargeSyncService
 {
     public async Task<RunSummary> RunAsync(CancellationToken cancellationToken = default)
     {
         var runId = Guid.NewGuid();
-        var started = DateTimeOffset.UtcNow;
+        var started = timeProvider.GetUtcNow();
         IReadOnlyList<EvDispatch> dispatches = [];
         string? octopusError = null;
 
@@ -42,7 +44,20 @@ public sealed class EvChargeSyncService(
         var shouldWrite = desired.RequiresWriteComparedTo(current);
         var writeApplied = false;
 
-        if (!options.SyncEnabled)
+        if (options.TestMode)
+        {
+            if (shouldWrite)
+            {
+                var plan = testModeLogger.CreateSchedulePlan(runId, started, desired, current, dispatches);
+                testModeLogger.LogSchedulePlan(plan);
+            }
+            else
+            {
+                var plan = testModeLogger.CreateNoChangePlan(runId, started, desired);
+                testModeLogger.LogNoChange(plan);
+            }
+        }
+        else if (!options.SyncEnabled)
         {
             logger.LogInformation("Sync disabled. Dry run for {RunId}. Desired mode {Mode}.", runId, desired.Mode);
         }
@@ -73,8 +88,9 @@ public sealed class EvChargeSyncService(
             DesiredSchedule = desired,
             CurrentSchedule = current,
             WriteApplied = writeApplied,
+            TestMode = options.TestMode,
             Success = true,
-            DurationMs = (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds
+            DurationMs = (long)(timeProvider.GetUtcNow() - started).TotalMilliseconds
         };
     }
 }
@@ -88,6 +104,7 @@ public sealed record RunSummary
     public required ForceChargeSchedule DesiredSchedule { get; init; }
     public required ForceChargeSchedule CurrentSchedule { get; init; }
     public required bool WriteApplied { get; init; }
+    public required bool TestMode { get; init; }
     public required bool Success { get; init; }
     public required long DurationMs { get; init; }
 

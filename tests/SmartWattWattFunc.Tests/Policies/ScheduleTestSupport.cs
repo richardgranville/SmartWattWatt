@@ -48,6 +48,12 @@ internal static class ScheduleTestSupport
             new TimeSlot(true, TimeOfDay.Parse("07:30"), TimeOfDay.Parse("08:30")),
             new TimeSlot(true, TimeOfDay.Parse("00:00"), TimeOfDay.Parse("05:30")));
 
+    public static ForceChargeSchedule PreScheduledSchedule() =>
+        new(
+            ScheduleMode.PreScheduled,
+            new TimeSlot(true, TimeOfDay.Parse("14:00"), TimeOfDay.Parse("15:00")),
+            new TimeSlot(true, TimeOfDay.Parse("18:00"), TimeOfDay.Parse("19:00")));
+
     public static void AssertSchedule(
         ForceChargeSchedule actual,
         ScheduleMode mode,
