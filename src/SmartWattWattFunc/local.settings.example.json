@@ -1,0 +1,19 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "KeyVaultUri": "",
+    "Octopus:AccountNumber": "A-00000000",
+    "Octopus:ApiKey": "",
+    "FoxEss:DeviceSerialNumber": "H3-XXXXXXXX",
+    "FoxEss:ApiToken": "",
+    "FoxEss:TimeZone": "Europe/London",
+    "FoxEss:DefaultSlot1Start": "23:30",
+    "FoxEss:DefaultSlot1End": "23:59",
+    "FoxEss:DefaultSlot2Start": "00:00",
+    "FoxEss:DefaultSlot2End": "05:30",
+    "Sync:Enabled": "false",
+    "Sync:TestMode": "true"
+  }
+}
