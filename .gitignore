@@ -1,0 +1,25 @@
+## Build
+bin/
+obj/
+out/
+
+## Azure Functions
+local.settings.json
+__blobstorage__
+__queuestorage__
+__azurite_db*__
+
+## IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+## Secrets
+*.pfx
+.env
+.env.*
+
+## OS
+Thumbs.db
+.DS_Store
