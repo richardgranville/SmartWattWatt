@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,8 +15,16 @@ public interface IFoxEssClient
     Task SetForceChargeScheduleAsync(ForceChargeSchedule schedule, CancellationToken cancellationToken = default);
 }
 
-public sealed class FoxEssClient(HttpClient httpClient, FoxEssOptions options) : IFoxEssClient
+public sealed class FoxEssClient(HttpClient httpClient, FoxEssOptions options, TimeProvider timeProvider) : IFoxEssClient
 {
+    internal const string SchedulerGetPath = "/op/v3/device/scheduler/get";
+    internal const string ForceChargeSetPath = "/op/v0/device/battery/forceChargeTime/set";
+
+    private const string DefaultUserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    private const string JsonMediaType = "application/json";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -24,28 +33,29 @@ public sealed class FoxEssClient(HttpClient httpClient, FoxEssOptions options) :
 
     public async Task<ForceChargeSchedule> GetForceChargeScheduleAsync(CancellationToken cancellationToken = default)
     {
-        const string path = "/op/v0/device/battery/forceChargeTime/get";
-        using var request = CreateRequest(HttpMethod.Get, path, query: $"sn={Uri.EscapeDataString(options.DeviceSerialNumber)}");
+        var serialNumber = RequireDeviceSerialNumber();
+        var body = new SchedulerGetRequest { DeviceSn = serialNumber };
+        using var request = CreateRequest(HttpMethod.Post, SchedulerGetPath, body);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
-        var payload = await response.Content.ReadFromJsonAsync<FoxEnvelope<ForceChargeTimeResult>>(JsonOptions, cancellationToken)
-            ?? throw new InvalidOperationException("Fox ESS returned an empty force charge schedule.");
+        var payload = await response.Content.ReadFromJsonAsync<FoxEnvelope<SchedulerGetResult>>(JsonOptions, cancellationToken)
+            ?? throw new InvalidOperationException("Fox ESS returned an empty scheduler schedule.");
 
         if (payload.Errno != 0)
         {
-            throw new InvalidOperationException($"Fox ESS forceChargeTime/get failed: {payload.Msg}");
+            throw new InvalidOperationException($"Fox ESS scheduler/get failed: {payload.Msg}");
         }
 
-        return MapFromFox(payload.Result!);
+        return FoxEssSchedulerMapper.MapFromScheduler(payload.Result!);
     }
 
     public async Task SetForceChargeScheduleAsync(ForceChargeSchedule schedule, CancellationToken cancellationToken = default)
     {
-        const string path = "/op/v0/device/battery/forceChargeTime/set";
+        var serialNumber = RequireDeviceSerialNumber();
         var body = new ForceChargeTimeSetRequest
         {
-            Sn = options.DeviceSerialNumber,
+            Sn = serialNumber,
             Enable1 = schedule.Slot1.Enabled,
             Enable2 = schedule.Slot2.Enabled,
             StartTime1 = ToFoxTime(schedule.Slot1.Start),
@@ -54,7 +64,7 @@ public sealed class FoxEssClient(HttpClient httpClient, FoxEssOptions options) :
             EndTime2 = ToFoxTime(schedule.Slot2.End)
         };
 
-        using var request = CreateRequest(HttpMethod.Post, path, body);
+        using var request = CreateRequest(HttpMethod.Post, ForceChargeSetPath, body);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -67,63 +77,95 @@ public sealed class FoxEssClient(HttpClient httpClient, FoxEssOptions options) :
         }
     }
 
+    private string RequireDeviceSerialNumber()
+    {
+        if (string.IsNullOrWhiteSpace(options.DeviceSerialNumber))
+        {
+            throw new InvalidOperationException(
+                "FoxEss:DeviceSerialNumber is required for Fox ESS API calls.");
+        }
+
+        return options.DeviceSerialNumber;
+    }
+
     private HttpRequestMessage CreateRequest(HttpMethod method, string path, object? body = null, string? query = null)
     {
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+        var timestamp = FormatTimestampMilliseconds(timeProvider.GetUtcNow());
         var signature = ComputeSignature(path, options.ApiToken, timestamp);
         var url = options.BaseUrl.TrimEnd('/') + path + (query is null ? string.Empty : "?" + query);
 
         var request = new HttpRequestMessage(method, url);
-        request.Headers.TryAddWithoutValidation("token", options.ApiToken);
-        request.Headers.TryAddWithoutValidation("timestamp", timestamp);
-        request.Headers.TryAddWithoutValidation("signature", signature);
-        request.Headers.TryAddWithoutValidation("lang", "en");
-        request.Headers.TryAddWithoutValidation("User-Agent", options.UserAgent);
+        AddFoxEssHeaders(request, timestamp, signature);
 
         if (body is not null)
         {
-            request.Content = JsonContent.Create(body, options: JsonOptions);
+            var json = JsonSerializer.Serialize(body, JsonOptions);
+            request.Content = new StringContent(json, Encoding.UTF8, JsonMediaType);
+        }
+        else
+        {
+            request.Headers.TryAddWithoutValidation("Content-Type", JsonMediaType);
         }
 
         return request;
     }
 
+    internal static void AddFoxEssHeaders(HttpRequestMessage request, FoxEssOptions options, string timestamp, string signature)
+    {
+        request.Headers.TryAddWithoutValidation("Token", options.ApiToken);
+        request.Headers.TryAddWithoutValidation("Lang", "en");
+        request.Headers.TryAddWithoutValidation("User-Agent", ResolveUserAgent(options));
+        request.Headers.TryAddWithoutValidation("Timezone", options.TimeZoneId);
+        request.Headers.TryAddWithoutValidation("Timestamp", timestamp);
+        request.Headers.TryAddWithoutValidation("Signature", signature);
+    }
+
+    internal static string ResolveUserAgent(FoxEssOptions options) =>
+        string.IsNullOrWhiteSpace(options.UserAgent) ? DefaultUserAgent : options.UserAgent;
+
+    private void AddFoxEssHeaders(HttpRequestMessage request, string timestamp, string signature) =>
+        AddFoxEssHeaders(request, options, timestamp, signature);
+
+    internal static IReadOnlyDictionary<string, string> BuildLoggedHeaders(
+        FoxEssOptions options,
+        string timestamp,
+        string signature) =>
+        new Dictionary<string, string>
+        {
+            ["Token"] = options.ApiToken,
+            ["Lang"] = "en",
+            ["User-Agent"] = ResolveUserAgent(options),
+            ["Timezone"] = options.TimeZoneId,
+            ["Timestamp"] = timestamp,
+            ["Content-Type"] = JsonMediaType,
+            ["Signature"] = signature
+        };
+
+    // Equivalent to Python: str(round(time.time() * 1000))
+    internal static string FormatTimestampMilliseconds(DateTimeOffset utcNow)
+    {
+        var milliseconds = Math.Round(
+            (utcNow - DateTimeOffset.UnixEpoch).TotalMilliseconds,
+            MidpointRounding.ToEven);
+
+        return ((long)milliseconds).ToString(CultureInfo.InvariantCulture);
+    }
+
     internal static string ComputeSignature(string path, string token, string timestamp)
     {
-        var text = $"{path}\r\n{token}\r\n{timestamp}";
+        // Fox ESS expects the literal characters \ r \ n between fields, not a CRLF byte sequence.
+        var text = $"{path}\\r\\n{token}\\r\\n{timestamp}";
         var hash = MD5.HashData(Encoding.UTF8.GetBytes(text));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static FoxTime ToFoxTime(TimeOfDay time) => new() { Hour = time.Hour, Minute = time.Minute };
 
-    private static ForceChargeSchedule MapFromFox(ForceChargeTimeResult result) =>
-        new(
-            ScheduleMode.Default,
-            new TimeSlot(ParseBool(result.Enable1), ToTimeOfDay(result.StartTime1), ToTimeOfDay(result.EndTime1)),
-            new TimeSlot(ParseBool(result.Enable2), ToTimeOfDay(result.StartTime2), ToTimeOfDay(result.EndTime2)));
-
-    private static bool ParseBool(string? value) =>
-        value is not null && (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1");
-
-    private static TimeOfDay ToTimeOfDay(FoxTime? time) =>
-        time is null ? new TimeOfDay(0, 0) : new TimeOfDay(time.Hour, time.Minute);
-
     private sealed class FoxEnvelope<T>
     {
         public int Errno { get; init; }
         public string? Msg { get; init; }
         public T? Result { get; init; }
-    }
-
-    private sealed class ForceChargeTimeResult
-    {
-        public string? Enable1 { get; init; }
-        public FoxTime? StartTime1 { get; init; }
-        public FoxTime? EndTime1 { get; init; }
-        public string? Enable2 { get; init; }
-        public FoxTime? StartTime2 { get; init; }
-        public FoxTime? EndTime2 { get; init; }
     }
 
     private sealed class ForceChargeTimeSetRequest
@@ -149,5 +191,6 @@ public sealed class FoxEssOptions
     public string BaseUrl { get; init; } = "https://www.foxesscloud.com";
     public string DeviceSerialNumber { get; init; } = string.Empty;
     public string ApiToken { get; init; } = string.Empty;
-    public string UserAgent { get; init; } = "SmartWattWatt/1.0";
+    public string TimeZoneId { get; init; } = "Europe/London";
+    public string UserAgent { get; init; } = string.Empty;
 }

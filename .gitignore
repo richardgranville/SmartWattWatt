@@ -25,3 +25,9 @@ __azurite_db*__
 ## OS
 Thumbs.db
 .DS_Store
+
+## Azurite
+__blobstorage__/
+__queuestorage__/
+__azurite*
+AzuriteConfig

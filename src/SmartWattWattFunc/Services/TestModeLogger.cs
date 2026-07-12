@@ -9,9 +9,9 @@ namespace SmartWattWattFunc.Services;
 public sealed class TestModeLogger(
     FoxEssOptions foxEssOptions,
     ScheduleOptions scheduleOptions,
+    TimeProvider timeProvider,
     ILogger<TestModeLogger> logger) : ITestModeLogger
 {
-    private const string Redacted = "[REDACTED]";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
     public void LogSchedulePlan(TestModeSchedulePlan plan) =>
@@ -97,35 +97,35 @@ public sealed class TestModeLogger(
         bool getExecuted,
         bool includeSetCall)
     {
+        const string getPath = FoxEssClient.SchedulerGetPath;
+        var serialNumber = foxEssOptions.DeviceSerialNumber;
+        var getTimestamp = FoxEssClient.FormatTimestampMilliseconds(timeProvider.GetUtcNow());
+        var getSignature = FoxEssClient.ComputeSignature(getPath, foxEssOptions.ApiToken, getTimestamp);
+
         var calls = new List<ApiCallDetail>
         {
             new(
                 "GetForceChargeSchedule",
-                "GET",
-                "/op/v0/device/battery/forceChargeTime/get",
+                "POST",
+                getPath,
                 getExecuted,
-                new Dictionary<string, string>
-                {
-                    ["sn"] = foxEssOptions.DeviceSerialNumber
-                })
+                SchedulerGetRequestBody: new SchedulerGetRequestBody(serialNumber),
+                Headers: FoxEssClient.BuildLoggedHeaders(foxEssOptions, getTimestamp, getSignature))
         };
 
         if (includeSetCall)
         {
+            const string setPath = FoxEssClient.ForceChargeSetPath;
+            var setTimestamp = FoxEssClient.FormatTimestampMilliseconds(timeProvider.GetUtcNow());
+            var setSignature = FoxEssClient.ComputeSignature(setPath, foxEssOptions.ApiToken, setTimestamp);
+
             calls.Add(new ApiCallDetail(
                 "SetForceChargeSchedule",
                 "POST",
-                "/op/v0/device/battery/forceChargeTime/set",
+                setPath,
                 false,
                 RequestBody: BuildSetRequestBody(desired),
-                Headers: new Dictionary<string, string>
-                {
-                    ["token"] = Redacted,
-                    ["timestamp"] = Redacted,
-                    ["signature"] = Redacted,
-                    ["lang"] = "en",
-                    ["User-Agent"] = foxEssOptions.UserAgent
-                }));
+                Headers: FoxEssClient.BuildLoggedHeaders(foxEssOptions, setTimestamp, setSignature)));
         }
 
         return calls;

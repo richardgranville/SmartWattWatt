@@ -7,7 +7,7 @@ namespace SmartWattWattFunc.Functions;
 public sealed class EvChargeSyncTimer(IEvChargeSyncService syncService, ILogger<EvChargeSyncTimer> logger)
 {
     [Function(nameof(EvChargeSyncTimer))]
-    public async Task Run([TimerTrigger("0 */15 * * * *", RunOnStartup = false)] TimerInfo timerInfo)
+    public async Task Run([TimerTrigger("0 */15 * * * *", RunOnStartup = true)] TimerInfo timerInfo)
     {
         var summary = await syncService.RunAsync();
         logger.LogInformation("RunSummary {Summary}", summary.ToJson());
