@@ -563,8 +563,8 @@ sequenceDiagram
 | Step | Action | On failure |
 |---|---|---|
 | 1 | Load configuration and secrets | Fail fast |
-| 2 | Authenticate to Octopus GraphQL | On failure: log error; treat dispatches as `[]`; continue to step 4 |
-| 3 | Fetch `plannedDispatches` | On failure: log error; treat dispatches as `[]`; continue to step 4 |
+| 2 | Authenticate to Octopus GraphQL | On failure: log error; treat dispatches as `[]`; continue to enforce default on Fox ESS |
+| 3 | Fetch `plannedDispatches` | On failure: log error; treat dispatches as `[]`; continue to enforce default on Fox ESS |
 | 4 | Build `desiredSchedule` via `ForceChargeScheduleBuilder` | — |
 | 5 | Read current Fox ESS Force Charge schedule | Abort; no Fox writes |
 | 6 | Compare `desiredSchedule` vs `currentSchedule` (normalised) | — |
@@ -713,7 +713,7 @@ When multiple outside-default dispatches exist alongside inside-default overnigh
 
 **Dispatch window → slot mapping:** Use dispatch `start` and `end` converted to local `hour`/`minute`. If a dispatch spans midnight and cannot fit in one slot (end after 23:59), clamp slot 1 to end at 23:59 and log a warning — slot 2 may need to carry the remainder only when that dispatch is assigned to slot 2 by the ordering rules above.
 
-**Service-layer rule (Octopus unavailable):** If the Octopus GraphQL call fails (auth error, network error, `errors[]` in response), the service treats this equivalently to **no dispatch windows** — log the error, then proceed to read Fox ESS and enforce the default schedule if not already set. Do not abort the run without attempting default restoration.
+**Service-layer rule (Octopus unavailable):** If the Octopus GraphQL call fails (auth error, network error, `errors[]` in response), the service treats this equivalently to **no dispatch windows** — log the error, then proceed to read Fox ESS and enforce the default schedule if not already set.
 
 ### 11.4 Slot repurposing rules
 

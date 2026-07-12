@@ -4,6 +4,8 @@ obj/
 out/
 
 ## Azure Functions
+# Never commit real API keys — copy local.settings.example.json instead.
+**/local.settings.json
 local.settings.json
 __blobstorage__
 __queuestorage__
@@ -23,3 +25,9 @@ __azurite_db*__
 ## OS
 Thumbs.db
 .DS_Store
+
+## Azurite
+__blobstorage__/
+__queuestorage__/
+__azurite*
+AzuriteConfig

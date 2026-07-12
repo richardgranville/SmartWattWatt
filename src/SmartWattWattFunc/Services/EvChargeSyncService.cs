@@ -36,11 +36,12 @@ public sealed class EvChargeSyncService(
         catch (Exception ex)
         {
             octopusError = ex.Message;
-            logger.LogError(ex, "Octopus GraphQL failed for run {RunId}; treating as no dispatch windows.", runId);
+            logger.LogError(ex, "Octopus GraphQL failed for run {RunId}; enforcing default Fox ESS schedule.", runId);
         }
 
         var desired = scheduleBuilder.Build(started, dispatches);
         var current = await foxEssClient.GetForceChargeScheduleAsync(cancellationToken);
+        LogFoxEssSchedulerSlots(runId, current);
         var shouldWrite = desired.RequiresWriteComparedTo(current);
         var writeApplied = false;
 
@@ -93,6 +94,17 @@ public sealed class EvChargeSyncService(
             DurationMs = (long)(timeProvider.GetUtcNow() - started).TotalMilliseconds
         };
     }
+
+    private void LogFoxEssSchedulerSlots(Guid runId, ForceChargeSchedule current) =>
+        logger.LogInformation(
+            "FoxEssSchedulerSlots {RunId} slot1Enabled={Slot1Enabled} slot1={Slot1Start}-{Slot1End} slot2Enabled={Slot2Enabled} slot2={Slot2Start}-{Slot2End}",
+            runId,
+            current.Slot1.Enabled,
+            current.Slot1.Start,
+            current.Slot1.End,
+            current.Slot2.Enabled,
+            current.Slot2.Start,
+            current.Slot2.End);
 }
 
 public sealed record RunSummary
@@ -101,8 +113,8 @@ public sealed record RunSummary
     public required DateTimeOffset TimestampUtc { get; init; }
     public required int OctopusDispatchCount { get; init; }
     public string? OctopusError { get; init; }
-    public required ForceChargeSchedule DesiredSchedule { get; init; }
-    public required ForceChargeSchedule CurrentSchedule { get; init; }
+    public required ForceChargeSchedule? DesiredSchedule { get; init; }
+    public required ForceChargeSchedule? CurrentSchedule { get; init; }
     public required bool WriteApplied { get; init; }
     public required bool TestMode { get; init; }
     public required bool Success { get; init; }

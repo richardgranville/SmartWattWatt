@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SmartWattWattFunc.Models;
 using SmartWattWattFunc.Configuration;
+using SmartWattWattFunc.Integrations.Http;
 using SmartWattWattFunc.Integrations.FoxEss;
 using SmartWattWattFunc.Integrations.Octopus;
 using SmartWattWattFunc.Policies;
@@ -15,8 +16,11 @@ using SmartWattWattFunc.Services;
 var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
 
-builder.Services.AddHttpClient<IOctopusGraphQlClient, OctopusGraphQlClient>();
-builder.Services.AddHttpClient<IFoxEssClient, FoxEssClient>();
+builder.Services.AddTransient<HttpTrafficLoggingHandler>();
+builder.Services.AddHttpClient<IOctopusGraphQlClient, OctopusGraphQlClient>()
+    .AddHttpMessageHandler<HttpTrafficLoggingHandler>();
+builder.Services.AddHttpClient<IFoxEssClient, FoxEssClient>()
+    .AddHttpMessageHandler<HttpTrafficLoggingHandler>();
 
 builder.Services.AddSingleton(sp =>
 {
@@ -57,7 +61,8 @@ builder.Services.AddSingleton(sp =>
         BaseUrl = configuration["FoxEss:BaseUrl"] ?? "https://www.foxesscloud.com",
         DeviceSerialNumber = configuration["FoxEss:DeviceSerialNumber"] ?? string.Empty,
         ApiToken = ResolveSecret(configuration, "FoxEssApiToken") ?? configuration["FoxEss:ApiToken"] ?? string.Empty,
-        UserAgent = configuration["FoxEss:UserAgent"] ?? "SmartWattWatt/1.0"
+        TimeZoneId = configuration["FoxEss:TimeZone"] ?? "Europe/London",
+        UserAgent = configuration["FoxEss:UserAgent"] ?? string.Empty
     };
 });
 

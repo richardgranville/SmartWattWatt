@@ -44,7 +44,10 @@ public sealed record ApiCallDetail(
     bool Executed,
     IReadOnlyDictionary<string, string>? Query = null,
     ForceChargeSetRequestBody? RequestBody = null,
+    SchedulerGetRequestBody? SchedulerGetRequestBody = null,
     IReadOnlyDictionary<string, string>? Headers = null);
+
+public sealed record SchedulerGetRequestBody(string DeviceSN);
 
 public sealed record ForceChargeSetRequestBody(
     string Sn,

@@ -19,9 +19,16 @@ internal sealed class CaptureTestModeLogger : ITestModeLogger
 {
     private readonly TestModeLogger _inner;
 
-    public CaptureTestModeLogger(FoxEssOptions foxEssOptions, ScheduleOptions scheduleOptions)
+    public CaptureTestModeLogger(
+        FoxEssOptions foxEssOptions,
+        ScheduleOptions scheduleOptions,
+        TimeProvider? timeProvider = null)
     {
-        _inner = new TestModeLogger(foxEssOptions, scheduleOptions, NullLogger<TestModeLogger>.Instance);
+        _inner = new TestModeLogger(
+            foxEssOptions,
+            scheduleOptions,
+            timeProvider ?? TimeProvider.System,
+            NullLogger<TestModeLogger>.Instance);
     }
 
     public TestModeSchedulePlan? LastSchedulePlan { get; private set; }
@@ -65,7 +72,7 @@ internal static class ServiceTestSupport
     {
         DeviceSerialNumber = "H3-TEST-SERIAL",
         ApiToken = "secret-fox-token",
-        UserAgent = "SmartWattWatt/1.0"
+        TimeZoneId = "Europe/London"
     };
 
     public static EvChargeSyncService CreateService(

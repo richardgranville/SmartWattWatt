@@ -54,9 +54,12 @@ public sealed class Scenario6_TestModeTests
         Assert.False(setCall.Executed);
         Assert.Equal(7, setCall.RequestBody!.StartTime1.Hour);
         Assert.Equal(30, setCall.RequestBody.StartTime1.Minute);
-        Assert.Equal("[REDACTED]", setCall.Headers!["token"]);
-        Assert.Equal("[REDACTED]", setCall.Headers["signature"]);
-        Assert.DoesNotContain("secret-fox-token", capture.LastLoggedJson!, StringComparison.Ordinal);
+        Assert.Equal("secret-fox-token", setCall.Headers!["Token"]);
+        Assert.False(string.IsNullOrWhiteSpace(setCall.Headers["Signature"]));
+        Assert.False(string.IsNullOrWhiteSpace(setCall.Headers["Timestamp"]));
+        Assert.Equal("application/json", setCall.Headers["Content-Type"]);
+        Assert.Equal("en", setCall.Headers["Lang"]);
+        Assert.Contains("secret-fox-token", capture.LastLoggedJson!, StringComparison.Ordinal);
 
         fox.Verify(x => x.GetForceChargeScheduleAsync(It.IsAny<CancellationToken>()), Times.Once);
         fox.Verify(x => x.SetForceChargeScheduleAsync(It.IsAny<ForceChargeSchedule>(), It.IsAny<CancellationToken>()), Times.Never);
