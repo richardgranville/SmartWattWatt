@@ -14,11 +14,7 @@
     "FoxEss:DefaultSlot2Start": "00:00",
     "FoxEss:DefaultSlot2End": "05:30",
     "Sync:Enabled": "false",
-<<<<<<< HEAD
     "Sync:TestMode": "true",
     "Sync:LogHttpTraffic": "true"
-=======
-    "Sync:TestMode": "true"
->>>>>>> 94a676abf6448c182fc613d0c44eda93f5857339
   }
 }

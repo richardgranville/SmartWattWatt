@@ -1,6 +1,5 @@
-using System.Net.Http.Headers;
+using System.Globalization;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SmartWattWattFunc.Models;
@@ -21,18 +20,23 @@ public sealed class OctopusGraphQlClient(HttpClient httpClient, OctopusOptions o
     };
 
     private const string AuthMutation = """
-        mutation APIKeyAuthentication($apiKey: String!) {
-          apiKeyAuthentication(apiKey: $apiKey) {
+        mutation obtainKrakenToken($APIKey: String!) {
+          obtainKrakenToken(input: { APIKey: $APIKey }) {
             token
           }
         }
         """;
 
     private const string DispatchQuery = """
-        query getEvChargeData($accountNumber: String!) {
+        query getDispatches($accountNumber: String!) {
           plannedDispatches(accountNumber: $accountNumber) {
             startDt
             endDt
+            delta
+            meta {
+              source
+              location
+            }
           }
         }
         """;
@@ -41,10 +45,10 @@ public sealed class OctopusGraphQlClient(HttpClient httpClient, OctopusOptions o
     {
         var token = await AuthenticateAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post, options.GraphQlEndpoint);
-        request.Headers.Authorization = new AuthenticationHeaderValue(token);
+        request.Headers.TryAddWithoutValidation("Authorization", token);
         request.Content = JsonContent.Create(new GraphQlRequest
         {
-            OperationName = "getEvChargeData",
+            OperationName = "getDispatches",
             Query = DispatchQuery,
             Variables = new { accountNumber = options.AccountNumber }
         }, options: JsonOptions);
@@ -61,19 +65,43 @@ public sealed class OctopusGraphQlClient(HttpClient httpClient, OctopusOptions o
             throw new InvalidOperationException($"Octopus GraphQL query failed: {message}");
         }
 
-        return payload.Data?.PlannedDispatches?
-            .Select(d => new EvDispatch(DateTimeOffset.Parse(d.StartDt!), DateTimeOffset.Parse(d.EndDt!)))
-            .ToList() ?? [];
+        return MapPlannedDispatches(payload.Data?.PlannedDispatches);
     }
+
+    internal static IReadOnlyList<EvDispatch> MapPlannedDispatches(IEnumerable<DispatchRecord>? records) =>
+        records?
+            .Select(MapPlannedDispatch)
+            .ToList() ?? [];
+
+    internal static EvDispatch MapPlannedDispatch(DispatchRecord record)
+    {
+        if (string.IsNullOrWhiteSpace(record.StartDt) || string.IsNullOrWhiteSpace(record.EndDt))
+        {
+            throw new InvalidOperationException("Octopus planned dispatch is missing startDt or endDt.");
+        }
+
+        return new EvDispatch(
+            DateTimeOffset.Parse(record.StartDt, CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(record.EndDt, CultureInfo.InvariantCulture),
+            ParseDelta(record.Delta),
+            record.Meta is null
+                ? null
+                : new EvDispatchMeta(record.Meta.Source, record.Meta.Location));
+    }
+
+    private static decimal? ParseDelta(string? value) =>
+        decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
 
     private async Task<string> AuthenticateAsync(CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, options.GraphQlEndpoint);
         request.Content = JsonContent.Create(new GraphQlRequest
         {
-            OperationName = "APIKeyAuthentication",
+            OperationName = "obtainKrakenToken",
             Query = AuthMutation,
-            Variables = new { apiKey = options.ApiKey }
+            Variables = new Dictionary<string, string> { ["APIKey"] = options.ApiKey }
         }, options: JsonOptions);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -88,7 +116,7 @@ public sealed class OctopusGraphQlClient(HttpClient httpClient, OctopusOptions o
             throw new InvalidOperationException($"Octopus authentication failed: {message}");
         }
 
-        var token = payload.Data?.ApiKeyAuthentication?.Token;
+        var token = payload.Data?.ObtainKrakenToken?.Token;
         if (string.IsNullOrWhiteSpace(token))
         {
             throw new InvalidOperationException("Octopus authentication did not return a token.");
@@ -117,23 +145,31 @@ public sealed class OctopusGraphQlClient(HttpClient httpClient, OctopusOptions o
 
     private sealed class AuthData
     {
-        public AuthToken? ApiKeyAuthentication { get; init; }
+        public ObtainKrakenTokenResult? ObtainKrakenToken { get; init; }
     }
 
-    private sealed class AuthToken
+    private sealed class ObtainKrakenTokenResult
     {
         public string? Token { get; init; }
     }
 
-    private sealed class DispatchData
+    internal sealed class DispatchData
     {
         public List<DispatchRecord>? PlannedDispatches { get; init; }
     }
 
-    private sealed class DispatchRecord
+    internal sealed class DispatchRecord
     {
         public string? StartDt { get; init; }
         public string? EndDt { get; init; }
+        public string? Delta { get; init; }
+        public DispatchMetaRecord? Meta { get; init; }
+    }
+
+    internal sealed class DispatchMetaRecord
+    {
+        public string? Source { get; init; }
+        public string? Location { get; init; }
     }
 }
 
