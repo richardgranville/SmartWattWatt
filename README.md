@@ -14,7 +14,6 @@ Implementation in progress. See [SmartWattWattFunc specification](docs/specs/Sma
 
 ## Local development
 
-<<<<<<< HEAD
 To run locally you need **Azurite** (Azure Storage emulator). Install it once, then run `azurite --silent` in a **separate terminal window** and leave it running while the function host is up. Timer triggers use `UseDevelopmentStorage=true` in `local.settings.json`, which connects to Azurite on `127.0.0.1:10000`.
 
 ### Prerequisites
@@ -65,8 +64,6 @@ That window must stay open for the whole local session. Azurite listens on `127.
 
 Alternatively, install the [Azurite VS Code extension](https://marketplace.visualstudio.com/items?itemName=Azurite.azurite) and start it from the command palette.
 
-=======
->>>>>>> 94a676abf6448c182fc613d0c44eda93f5857339
 ### 1. Create your local settings (not committed to git)
 
 Copy the example file and add your real values:
@@ -107,7 +104,6 @@ git reset HEAD src/SmartWattWattFunc/local.settings.json
 
 ### 3. Run the function
 
-<<<<<<< HEAD
 You need **two terminal windows**:
 
 **Terminal 1 — Azurite (start this first):**
@@ -120,14 +116,11 @@ Keep this window open. Do not close it while testing locally.
 
 **Terminal 2 — function host:**
 
-=======
->>>>>>> 94a676abf6448c182fc613d0c44eda93f5857339
 ```powershell
 cd src/SmartWattWattFunc
 func start
 ```
 
-<<<<<<< HEAD
 The host should start and register `EvChargeSyncTimer`.
 
 ### 4. When does it run?
@@ -168,14 +161,10 @@ Logs include full values (tokens, API keys, signatures). Use only for local debu
 ### 6. Run tests
 
 Tests do not need API keys:
-=======
-### 4. Run tests
->>>>>>> 94a676abf6448c182fc613d0c44eda93f5857339
 
 ```powershell
 dotnet test
 ```
-<<<<<<< HEAD
 
 ### Quick checklist
 
@@ -221,8 +210,6 @@ The client also sends a browser-style `User-Agent` and `timezone` header as requ
 **Octopus GraphQL returns 400 (Bad Request)**
 
 Usually an invalid `Octopus:ApiKey` or `Octopus:AccountNumber`. Verify both in your Octopus account settings. When Octopus fails, the function logs the error and still enforces the **default** Fox ESS schedule if the device is not already set to it.
-=======
->>>>>>> 94a676abf6448c182fc613d0c44eda93f5857339
 
 ## Documentation
 
